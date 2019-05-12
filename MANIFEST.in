@@ -1,0 +1,8 @@
+# Include the license file
+include LICENSE.txt
+
+# Include the data files
+include gstat/datasets/xgboost_lab/dflearning.csv
+include gstat/datasets/xgboost_lab/dflearningMB.csv
+include gstat/datasets/xgboost_lab/dfscoring.csv
+include gstat/datasets/xgboost_lab/dfscoringMB.csv
