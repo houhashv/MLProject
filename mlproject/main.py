@@ -1,4 +1,4 @@
-import mlproject.datasets.xgboost_lab.xgboost_data as xgboostdata
+import mlproject.datasets.datasets.xgboost_data as xgboostdata
 from mlproject.dev_tools import get_cols
 from mlproject.pre_processing.pipelines import MLPipeline
 from mlproject.pre_processing.transformers import *
@@ -15,16 +15,17 @@ from matplotlib import pyplot as plt
 import pandas as pd
 import copy
 import shap
+import pickle
+import os
 
 
 def run():
 
     key_cols = ['id', 'siduri', 'misparprat', 'wave']
     target_cols = ["futereLFP", "future_hour_income", "incomeGroupUp"]
-    exclude = ["futureIncomeGroup", "future_mean_income_group", "incomeGroupDown",
-               'misparmeshivproxy', 'mishkalorech',
-               'nGroup', 'n', 'future_hour_income', 's_seker', 'gilGroup',
-               'paamachronachashavani', 'gilm', 'Unnamed: 0']
+    exclude = ["futureIncomeGroup", "future_mean_income_group", "incomeGroupDown", 'misparmeshivproxy', 'mishkalorech',
+               'nGroup', 'n', 'future_hour_income', 's_seker', 'gilGroup', 'paamachronachashavani', 'gilm',
+               'Unnamed: 0']
 
     df_p = xgboostdata.dflearning()
     df_meshek = xgboostdata.dflearning_mb()
@@ -41,9 +42,7 @@ def run():
         columns[p] = copy.deepcopy(columns_prep)
         columns[p]["key"] = key_cols
         columns[p]["target"] = [target_cols[index]]
-
     # dfs = sampler(dflearning)
-
     problem = "3"
     cat_cols = columns[problem]["categoric"]
     numeric_cols = columns[problem]["numeric"]
@@ -59,6 +58,7 @@ def run():
     clear_stage = ClearNoCategoriesTransformer(categorical_cols=cat_cols)
     imputer = ImputeTransformer(numerical_cols=numeric_cols, categorical_cols=cat_cols)
     outliers = OutliersTransformer(numerical_cols=numeric_cols, categorical_cols=cat_cols)
+    scale = ScalingTransformer(numerical_cols=numeric_cols)
     categorize = CategorizeByTargetTransformer(categorical_cols=cat_cols)
     correlations = CorrelationTransformer(numerical_cols=numeric_cols, categorical_cols=cat_cols, target=target,
                                           threshold=0.9)
@@ -97,32 +97,42 @@ def run():
     steps_feat = [("clear_non_variance", clear_stage),
                   ("imputer", imputer),
                   ("outliers", outliers),
+                  ("scaling", scale),
                   ("categorize", categorize),
                   ("correlations", correlations),
                   ("dummies", dummies)]
     pipeline_feat = MLPipeline(steps=steps_feat)
-    # pipeline_feat.fit(X_train, y_train)
-    steps = [("pipeline_feat", pipeline_feat), ("classifier", meta)]
-    # steps = steps_feat + [("classifier", meta)]
+    X_train = pipeline_feat.fit_transform(X_train, y_train).reset_index(drop=True)
+    X_test = pipeline_feat.transform(X_test).reset_index(drop=True)
+    path = os.getcwd() + "/results/"
+    X_train.to_csv(path + "x_train.csv", index=False)
+    X_test.to_csv(path + "x_test.csv", index=False)
+    y_train.to_csv(path + "y_train.csv", index=False)
+    y_test.to_csv(path + "x_test.csv", index=False)
+    steps = [("classifier", meta)]
     pipeline = MLPipeline(steps=steps)
     grid = GridSearchCV(estimator=pipeline, param_grid=params, cv=2, refit=True)
     grid.fit(X_train, y_train)
     train_score = grid.score(X_train, y_train)
     test_score = grid.score(X_test, y_test)
-    # out_of_time_scoring = grid.predict_proba(X_out_of_time)[:, 1]
-    # pickle.dump(grid, open("/pipeline_models/{}.p".format(problem), "wb"))
-    # grid = pickle.load(open("/pipeline_models/{}.p".format(problem), "rb"))
+    pickle.dump(grid, open(path + "grid.p", "wb"))
+    # grid = pickle.load(open("/{}.p".format(problem), "rb"))
     print("problem {} results".format(problem))
     print("train_score: {}".format(train_score))
     print("test_score: {}".format(test_score))
-    # pd.DataFrame(out_of_time_scoring).to_csv("out_of_time_scoring_problem_{}.csv".format(problem), index=False)
-    print("predictions out of time of problem {} has been saved to the folder from which this file is running on".\
-          format(problem))
+
+
+def analysis():
+
+    path = os.getcwd()
+    X_train = pd.read_csv(path + "/results/x_train.csv")
+    y_train = pd.read_csv(path + "/results/x_train.csv")
+    X_test = pd.read_csv(path + "/results/x_train.csv")
+    grid = pickle.load(open(path + "/results/grid.p", "rb"))
     estimator = grid.predict_proba(X_test)[:, 1]
     f = lambda x: grid.best_estimator_.steps[-1][1].predict_proba(x)[:, 1]
-    x = pipeline_feat.fit_transform(X_train, y_train)
-    print(x)
-    X = pd.concat([x, y_train], axis=1)
+    X = X_train
+    X = pd.concat([X, y_train], axis=1)
     a = X.corr("spearman")
     print(a)
     # use Kernel SHAP to explain test set predictions
@@ -146,4 +156,6 @@ def run():
 
 if __name__=="__main__":
 
+    os.chdir(os.path.dirname(os.path.realpath(__file__)))
     run()
+    analysis()
