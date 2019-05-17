@@ -71,7 +71,7 @@ def run():
     clf4 = MLPClassifier()
     clf5 = GaussianNB()
     meta_cls = XGBClassifier(n_jobs=-1, alpha=10, max_depth=3, objective="reg:logistic")
-    meta = StackingClassifier(classifiers=[clf2], meta_classifier=meta_cls)
+    meta = StackingClassifier(classifiers=[clf3,clf4], meta_classifier=meta_cls)
     # Number of trees in random forest
     n_estimators = [200]
     max_features = ['auto']
@@ -158,4 +158,4 @@ if __name__=="__main__":
 
     os.chdir(os.path.dirname(os.path.realpath(__file__)))
     run()
-    analysis()
+    # analysis()
