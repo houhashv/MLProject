@@ -2,60 +2,49 @@ import mlproject.datasets.datasets.xgboost_data as xgboostdata
 from mlproject.dev_tools import get_cols
 from mlproject.pre_processing.pipelines import MLPipeline
 from mlproject.pre_processing.transformers import *
-from xgboost import XGBClassifier
-from sklearn.neural_network import MLPClassifier
-from sklearn.linear_model import LogisticRegression
-from sklearn.neighbors import KNeighborsClassifier
-from sklearn.naive_bayes import GaussianNB
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import GridSearchCV
-from mlxtend.classifier import StackingClassifier
-from sklearn.model_selection import train_test_split
-from matplotlib import pyplot as plt
 import pandas as pd
 import copy
 import shap
 import pickle
 import os
+import time
+from sklearn.model_selection import train_test_split
+from matplotlib import pyplot as plt
+from sklearn.linear_model import LogisticRegression
+from sklearn.neural_network import MLPClassifier
+from xgboost import XGBClassifier
+from sklearn.model_selection import GridSearchCV
+from mlxtend.classifier import StackingClassifier
+import multiprocessing as mp
 
 
 def run():
 
     key_cols = ['id', 'siduri', 'misparprat', 'wave']
     target_cols = ["futereLFP", "future_hour_income", "incomeGroupUp"]
-    exclude = ["futureIncomeGroup", "future_mean_income_group", "incomeGroupDown", 'misparmeshivproxy', 'mishkalorech',
-               'nGroup', 'n', 'future_hour_income', 's_seker', 'gilGroup', 'paamachronachashavani', 'gilm',
-               'Unnamed: 0']
+    exclude = ["futureIncomeGroup", "future_mean_income_group", "incomeGroupDown", 'misparmeshivproxy',
+               'mishkalorech', 'nGroup', 'n', 'future_hour_income', 's_seker', 'gilGroup', 'paamachronachashavani',
+               'gilm', 'Unnamed: 0']
 
     df_p = xgboostdata.dflearning()
     df_meshek = xgboostdata.dflearning_mb()
     dflearning = pd.merge(df_p, df_meshek, on='siduri', how='left')
-    score_p = xgboostdata.dfscoring()
-    score_m = xgboostdata.dfscoring_mb()
-    dfscore = pd.merge(score_p, score_m, on='siduri', how='left')
-
+    dflearning = dflearning[dflearning["incomeGroup"] < 10]
     columns_prep = get_cols(dflearning, key_cols + target_cols + exclude, 0.005)
     problems = [str(i) for i in range(1, 4)]
-
-
     columns = dict()
     for index, p in enumerate(problems):
         columns[p] = None
         columns[p] = copy.deepcopy(columns_prep)
         columns[p]["key"] = key_cols
         columns[p]["target"] = [target_cols[index]]
-    # dfs = sampler(dflearning)
     problem = "3"
     cat_cols = columns[problem]["categoric"]
     numeric_cols = columns[problem]["numeric"]
     target = columns[problem]["target"]
     dflearning = dflearning[cat_cols + numeric_cols + target]
     X_train, X_test, y_train, y_test = train_test_split(dflearning.drop(target, axis=1), dflearning[target],
-                                                        test_size=0.3, random_state=42)
-    complete_cols = [col for col in cat_cols + numeric_cols if col not in dfscore.columns]
-    for col in complete_cols:
-        dfscore[col] = 0
-    # X_out_of_time = dfscore[cat_cols + numeric_cols]
+                                                        test_size=0.25, random_state=42)
 
     clear_stage = ClearNoCategoriesTransformer(categorical_cols=cat_cols)
     imputer = ImputeTransformer(numerical_cols=numeric_cols, categorical_cols=cat_cols)
@@ -64,38 +53,25 @@ def run():
     categorize = CategorizeByTargetTransformer(categorical_cols=cat_cols)
     correlations = CorrelationTransformer(numerical_cols=numeric_cols, categorical_cols=cat_cols, target=target,
                                           threshold=0.9)
-    # le = LabelEncoderTransformer(cat_cols)
     dummies = DummiesTransformer(cat_cols)
 
-    clf1 = KNeighborsClassifier(n_neighbors=1, n_jobs=-1)
-    clf2 = RandomForestClassifier(random_state=0, n_jobs=-1, max_depth=1)
-    clf3 = LogisticRegression()
-    clf4 = MLPClassifier()
-    clf5 = GaussianNB()
-    meta_cls = XGBClassifier(n_jobs=-1, alpha=10, max_depth=3, objective="reg:logistic")
-    meta = StackingClassifier(classifiers=[clf3,clf4], meta_classifier=meta_cls)
-    # Number of trees in random forest
-    n_estimators = [200]
-    max_features = ['auto']
-    max_depth = [20]
-    min_samples_split = [5]
-    min_samples_leaf = [2]
-    bootstrap = [True]
-    # Create the random grid
-    random_grid = {'classifier__randomforestclassifier__n_estimators': n_estimators,
-                   'classifier__randomforestclassifier__max_features': max_features,
-                   'classifier__randomforestclassifier__max_depth': max_depth,
-                   'classifier__randomforestclassifier__min_samples_split': min_samples_split,
-                   'classifier__randomforestclassifier__min_samples_leaf': min_samples_leaf,
-                   'classifier__randomforestclassifier__bootstrap': bootstrap,
-                   'classifier__meta-xgbclassifier__n_estimators': n_estimators,
-                   'classifier__meta-xgbclassifier__max_features': max_features,
-                   'classifier__meta-xgbclassifier__max_depth': max_depth,
-                   'classifier__meta-xgbclassifier__min_samples_split': min_samples_split,
-                   'classifier__meta-xgbclassifier__min_samples_leaf': min_samples_leaf,
-                   'classifier__meta-xgbclassifier__bootstrap': bootstrap}
-
-    params = random_grid
+    clf1 = LogisticRegression()
+    clf2 = MLPClassifier(activation="relu", hidden_layer_sizes=(100, 100), solver="sgd")
+    meta_cls = XGBClassifier(n_jobs=mp.cpu_count() - 2, objective="reg:logistic", scoring='roc_auc', bootstrap=True)
+    meta = StackingClassifier(classifiers=[clf1, clf2], meta_classifier=meta_cls)
+    # Create the grid search hyperparameters
+    params = {
+        'logisticregression__C': [1 ** -i for i in range(-3, 4)],
+        'mlpclassifier__alpha': [1 ** -i for i in range(-3, 4)],
+        'mlpclassifier__batch_size': [32, 64],
+        'mlpclassifier__learning_rate_init': [1 ** -i for i in range(-3, 4)],
+        'meta-xgbclassifier__n_estimators': [800, 900, 1000],
+        'meta-xgbclassifier__colsample_bytree': [i / 10.0 for i in range(6, 9)],
+        'meta-xgbclassifier__max_depth': range(3, 6),
+        'meta-xgbclassifier__min_samples_split': [i / 10.0 for i in range(2, 6)],
+        'meta-xgbclassifier__min_samples_leaf': [i / 10.0 for i in range(2, 5)],
+        'meta-xgbclassifier__gamma': [0, 1, 5]}
+    # the pre process pipeline steps
     steps_feat = [("clear_non_variance", clear_stage),
                   ("imputer", imputer),
                   ("outliers", outliers),
@@ -110,15 +86,12 @@ def run():
     X_train.to_csv(path + "x_train.csv", index=False)
     X_test.to_csv(path + "x_test.csv", index=False)
     y_train.to_csv(path + "y_train.csv", index=False)
-    y_test.to_csv(path + "x_test.csv", index=False)
-    steps = [("classifier", meta)]
-    pipeline = MLPipeline(steps=steps)
-    grid = GridSearchCV(estimator=pipeline, param_grid=params, cv=2, refit=True)
+    y_test.to_csv(path + "y_test.csv", index=False)
+    grid = GridSearchCV(estimator=meta, param_grid=params, cv=3, refit=True, n_jobs=mp.cpu_count() - 2)
     grid.fit(X_train, y_train)
     train_score = grid.score(X_train, y_train)
     test_score = grid.score(X_test, y_test)
     pickle.dump(grid, open(path + "grid.p", "wb"))
-    # grid = pickle.load(open("/{}.p".format(problem), "rb"))
     print("problem {} results".format(problem))
     print("train_score: {}".format(train_score))
     print("test_score: {}".format(test_score))
@@ -156,8 +129,9 @@ def analysis():
     plt.show()
 
 
-if __name__=="__main__":
+if __name__ == "__main__":
 
     os.chdir(os.path.dirname(os.path.realpath(__file__)))
+    start_time = time.time()
     run()
-    # analysis()
+    print("the total time in minutes is: {}".format((time.time() - start_time) / 60))
