@@ -345,12 +345,12 @@ class ScalingTransformer(CustomTransformer):
         :return: df: the transformed data - Dataframe
         """
         cols_to_complete = [col for col in self.columns if col not in X.columns]
-        X = X.copy(True)[self.columns]
+        df = X.copy(True)
         for col in cols_to_complete:
-            X[col] = 0
+            df[col] = 0
         if len(self.numerical_cols) > 0:
-            X[self.numerical_cols] = self.scaler.transform(X[self.numerical_cols])
-        return X[self.columns]
+            df[self.numerical_cols] = self.scaler.transform(X[self.numerical_cols])
+        return df[self.columns]
 
 
 class CategorizingTransformer(CustomTransformer):
@@ -491,7 +491,12 @@ class CategorizeByTargetTransformer(CustomTransformer):
         """
         X = df[col].values
         try:
-            target = y.values
+            if isinstance(y, pd.Series):
+                target = y.values
+            elif isinstance(y, pd.DataFrame):
+                target = y.iloc[:, 0].values
+            else:
+                raise Exception("y is not a DataFrame or Series, please pass y typed Series to the function")
         except Exception as e:
             print(e)
         try:
@@ -499,7 +504,7 @@ class CategorizeByTargetTransformer(CustomTransformer):
         except Exception as e:
             return pd.crosstab(X, target, rownames=['X'], colnames=['target'])
         try:
-            re[True]
+            temp = re[True]
         except Exception as e:
             re[True] = 0
         re["per"] = re[True] / re["All"]
@@ -585,7 +590,7 @@ class CorrelationTransformer(CustomTransformer):
         constructor
         :param numerical_cols: the numerical columns in the dataframe - list of strings
         :param categorical_cols: the categorical columns in the dataframe - list of strings
-        :param target: the name of the target column, default: None - string
+        :param target: the name of the target column, default: None - list of string
         :param threshold: the threshold that indicates if the columns are correlated or not, default: 0.7 - float
         """
         super(CorrelationTransformer, self).__init__()
@@ -644,7 +649,12 @@ class CorrelationTransformer(CustomTransformer):
             df = pd.concat([X, y], axis=1)
             final_cols = [col for col in model_cols if col in df.columns]
             corr = df[final_cols].corr("spearman")
-            stayed = self._remove_correlated_features(corr)
+            try:
+                stayed = self._remove_correlated_features(corr)
+            except Exception as e:
+                print("can't correlate this")
+                print("this is the exception")
+                print(e)
             self.columns_stay = [col for col in stayed if col in df.columns]
             self.numerical_cols = [col for col in self.numerical_cols if col in self.columns_stay]
             self.categorical_cols = [col for col in self.categorical_cols if col in self.columns_stay]
@@ -756,14 +766,16 @@ class DummiesTransformer(CustomTransformer):
         """
         cols = [col for col in self.categorical_cols if col in X.columns]
         df = X.copy(True)
-        df = pd.concat([df.drop(cols, axis=1),
-                        pd.get_dummies(data=df[cols], columns=cols, drop_first=True)], axis=1)
-        cols_out = [col for col in df.columns if col in self.cols_name_after]
-        cols_complete = [col for col in self.cols_name_after if col not in df.columns]
-        df = df[cols_out]
-        for col in cols_complete:
-            df[col] = 0
-        if self.final_cols is None:
-            self.final_cols = cols_out + cols_complete
-
-        return df[self.final_cols]
+        if len(cols) > 0:
+            df = pd.concat([df.drop(cols, axis=1),
+                            pd.get_dummies(data=df[cols], columns=cols, drop_first=True)], axis=1)
+            cols_out = [col for col in df.columns if col in self.cols_name_after]
+            cols_complete = [col for col in self.cols_name_after if col not in df.columns]
+            df = df[cols_out]
+            for col in cols_complete:
+                df[col] = 0
+            if self.final_cols is None:
+                self.final_cols = cols_out + cols_complete
+            return df[self.final_cols]
+        else:
+            return df

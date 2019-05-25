@@ -7,6 +7,6 @@ requirements = ['scikit-learn', 'pandas', 'xgboost', 'matplotlib', 'mlxtend', 's
 setup(name='ml-project',
       packages=setuptools.find_packages(),
       version='0.1',
-      description='for ml project',
+      description='ml project',
       install_requires=requirements,
       include_package_data=True)
