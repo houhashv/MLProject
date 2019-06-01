@@ -1,10 +1,10 @@
 from sklearn.base import TransformerMixin, BaseEstimator
-from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.preprocessing import LabelEncoder, StandardScaler, Imputer
 import pandas as pd
-from sklearn.preprocessing import Imputer
-from sklearn.cluster import DBSCAN
+import hdbscan
 import numpy as np
 import networkx
+pd.options.mode.chained_assignment = None
 
 
 class CustomTransformer(BaseEstimator, TransformerMixin):
@@ -97,6 +97,7 @@ class ClearNoCategoriesTransformer(CustomTransformer):
                 self._clear(df, col)
         except Exception as e:
             print(e)
+        print("ClearNoCategoriesTransformer fit end")
         return self
 
     def transform(self, X, y=None, **kwargs):
@@ -111,6 +112,7 @@ class ClearNoCategoriesTransformer(CustomTransformer):
             X = pd.DataFrame(X, columns=self._columns, copy=True)
         removed = [col2 for col2 in self.categorical_cols if col2 not in self.include_cols]
         columns = [col for col in X.columns if col not in removed]
+        print("ClearNoCategoriesTransformer transform end")
         return X[columns]
 
 
@@ -149,6 +151,7 @@ class ImputeTransformer(CustomTransformer):
             self.imp = Imputer(strategy=self.strategy)
             self.imp.fit(X[self.numerical_cols])
             self.statistics_ = pd.Series(self.imp.statistics_, index=X[self.numerical_cols].columns)
+        print("ImputeTransformer fit end")
         return self
 
     def transform(self, X, y=None, **kwargs):
@@ -172,6 +175,7 @@ class ImputeTransformer(CustomTransformer):
             Ximp = self.imp.transform(X[self.numerical_cols])
             Xfilled = pd.DataFrame(Ximp, index=X[self.numerical_cols].index, columns=X[self.numerical_cols].columns)
             X[self.numerical_cols] = Xfilled
+        print("ImputeTransformer transform end")
         return X
 
 
@@ -248,19 +252,22 @@ class OutliersTransformer(CustomTransformer):
 
     def _dbscan(self, X, col):
         """
-        using the DBSCAN clustering to detect outliers: https://en.wikipedia.org/wiki/DBSCAN
+        using the dbscan clustering to detect outliers: https://en.wikipedia.org/wiki/dbscan
         :param X: the dataframe - Dataframe
         :param col: the column to check and fix - string
-        :return: DBSCAN: instance of DBSCAN class implemented:
-        https://scikit-learn.org/stable/modules/generated/sklearn.cluster.DBSCAN.html
+        :return: dbscan: instance of dbscan class implemented:
+        https://scikit-learn.org/stable/modules/generated/sklearn.cluster.dbscan.html
         """
         if self.min_samples is None:
             self.min_samples = int(X[col].shape[0] * 0.01)
 
         if self.epsilon is None:
             self.epsilon = np.max([1.0, X[col].median() + X[col].std()])
-
-        return DBSCAN(min_samples=self.min_samples, eps=self.epsilon, n_jobs=-1)
+        try:
+            return hdbscan.HDBSCAN(min_cluster_size=self.min_samples, min_samples=2, cluster_selection_method="leaf",
+                                   allow_single_cluster=True)
+        except Exception as e:
+            return None
 
     def fit(self, X, y=None, **kwargs):
         """
@@ -273,6 +280,7 @@ class OutliersTransformer(CustomTransformer):
         self.numerical_cols = [col for col in self.numerical_cols if col in X.columns]
         self.categorical_cols = [col for col in self.categorical_cols if col in X.columns]
         self.outliers = {col: self._dbscan(X, col) for col in self.numerical_cols}
+        print("OutliersTransformer fit end")
         return self
 
     def transform(self, X, y=None, **kwargs):
@@ -286,25 +294,34 @@ class OutliersTransformer(CustomTransformer):
         X = X.copy(True)
         for col, dbscan in self.outliers.items():
             # the labels of clusters ny dbscan
-            labels = dbscan.fit(X[col].values.reshape(-1, 1)).labels_
             try:
-                index_of_outliers = X[col][labels == -1].index.tolist()
-                if sum(index_of_outliers) > 0:
-                    X_nulls = X.copy(True)
-                    X_nulls.at[index_of_outliers, col] = None
-                    nulls = X_nulls[col].isnull()
-                    outlier_ind_name = col + '_has_outliers'
-                    # if there are missing values create a new indicator
-                    if sum(nulls) > 0:
-                        self.categorical_cols.append(outlier_ind_name)
-                        X[outlier_ind_name] = labels == -1
-                    if self.strategy == "zero":
-                        X.at[index_of_outliers, col] = 0
-                    else:
-                        X = self._fix(X, col)
+                outlier_scores = dbscan.fit(X[col].values.reshape(-1, 1)).outlier_scores_
+                threshold = pd.Series(outlier_scores).quantile(0.99)
+                labels = [-1 if x > threshold else 0 for x in outlier_scores]
+                index_of_outliers = np.where(outlier_scores > threshold)[0].tolist()
+                try:
+                    # index_of_outliers = X[col][outliers == True].index.tolist()
+                    if sum(index_of_outliers) > 0:
+                        X_nulls = X.copy(True)
+                        for i in index_of_outliers:
+                            X_nulls.at[i, col] = None
+                        nulls = X_nulls[col].isnull()
+                        outlier_ind_name = col + '_has_outliers'
+                        # if there are missing values create a new indicator
+                        if sum(nulls) > 0:
+                            self.categorical_cols.append(outlier_ind_name)
+                            X[outlier_ind_name] = labels == -1
+                        if self.strategy == "zero":
+                            for i in index_of_outliers:
+                                X.at[i, col] = 0
+                        else:
+                            X = self._fix(X, col)
+                except Exception as e:
+                    print(e)
             except Exception as e:
+                print("there is an error in dbscan:")
                 print(e)
-
+        print("OutliersTransformer transform end")
         return X
 
 
@@ -334,6 +351,7 @@ class ScalingTransformer(CustomTransformer):
             self.scaler = StandardScaler()
             self.scaler.fit(X[self.numerical_cols])
         self.columns = X.columns
+        print("ScalingTransformer fit end")
         return self
 
     def transform(self, X, y=None, **kwargs):
@@ -345,12 +363,13 @@ class ScalingTransformer(CustomTransformer):
         :return: df: the transformed data - Dataframe
         """
         cols_to_complete = [col for col in self.columns if col not in X.columns]
-        X = X.copy(True)[self.columns]
+        df = X.copy(True)
         for col in cols_to_complete:
-            X[col] = 0
+            df[col] = 0
         if len(self.numerical_cols) > 0:
-            X[self.numerical_cols] = self.scaler.transform(X[self.numerical_cols])
-        return X[self.columns]
+            df[self.numerical_cols] = self.scaler.transform(X[self.numerical_cols])
+        print("ScalingTransformer transform end")
+        return df[self.columns]
 
 
 class CategorizingTransformer(CustomTransformer):
@@ -397,7 +416,7 @@ class CategorizingTransformer(CustomTransformer):
             ind = df_return[df_return["above_threshold"] == 0].index
             if len(ind) != 0:
                 ind = ind[0]
-            df_return.at[ind, "above_threshold"] = 1
+            df_return.iloc[ind, "above_threshold"] = 1
 
         if transform and cut:
             df_return[col] = df_return.apply(lambda x: "joined_category" if x["above_threshold"] == 0 else x[col],
@@ -434,6 +453,7 @@ class CategorizingTransformer(CustomTransformer):
         """
         self.categorical_cols = [col for col in X.columns if col in self.categorical_cols or "_was_missing" in col or
                                  "_has_outliers" in col]
+        print("CategorizingTransformer fit end")
         return self
 
     def transform(self, X, y=None, **kwargs):
@@ -459,6 +479,7 @@ class CategorizingTransformer(CustomTransformer):
                 temp = {}
 
         self.categorical_cols = cat_dic
+        print("CategorizingTransformer transform end")
         return X_copy
 
 
@@ -491,7 +512,12 @@ class CategorizeByTargetTransformer(CustomTransformer):
         """
         X = df[col].values
         try:
-            target = y.values
+            if isinstance(y, pd.Series):
+                target = y.values
+            elif isinstance(y, pd.DataFrame):
+                target = y.iloc[:, 0].values
+            else:
+                raise Exception("y is not a DataFrame or Series, please pass y typed Series to the function")
         except Exception as e:
             print(e)
         try:
@@ -499,7 +525,7 @@ class CategorizeByTargetTransformer(CustomTransformer):
         except Exception as e:
             return pd.crosstab(X, target, rownames=['X'], colnames=['target'])
         try:
-            re[True]
+            temp = re[True]
         except Exception as e:
             re[True] = 0
         re["per"] = re[True] / re["All"]
@@ -553,7 +579,7 @@ class CategorizeByTargetTransformer(CustomTransformer):
                 left_cols = [col for col in columns if col not in drop_out]
                 for colu in left_cols:
                     self.names[col][colu] = colu
-
+        print("CategorizeByTargetTransformer fit end")
         return self
 
     def transform(self, X, y=None, **kwargs):
@@ -572,6 +598,7 @@ class CategorizeByTargetTransformer(CustomTransformer):
             keys = self.names[col].keys()
             df[col] = df[col].apply(lambda x: self.names[col][str(x).replace(" ", "")] if str(x).replace(" ", "") in
                                                                                           keys else x)
+        print("CategorizeByTargetTransformer transform end")
         return df
 
 
@@ -585,7 +612,7 @@ class CorrelationTransformer(CustomTransformer):
         constructor
         :param numerical_cols: the numerical columns in the dataframe - list of strings
         :param categorical_cols: the categorical columns in the dataframe - list of strings
-        :param target: the name of the target column, default: None - string
+        :param target: the name of the target column, default: None - list of string
         :param threshold: the threshold that indicates if the columns are correlated or not, default: 0.7 - float
         """
         super(CorrelationTransformer, self).__init__()
@@ -629,6 +656,7 @@ class CorrelationTransformer(CustomTransformer):
         """
         self.categorical_cols = [col for col in X.columns if col in self.categorical_cols or "_was_missing" in col or
                                  "_has_outliers" in col]
+        print("CorrelationTransformer fit end")
         return self
 
     def transform(self, X, y=None, **kwargs):
@@ -644,12 +672,18 @@ class CorrelationTransformer(CustomTransformer):
             df = pd.concat([X, y], axis=1)
             final_cols = [col for col in model_cols if col in df.columns]
             corr = df[final_cols].corr("spearman")
-            stayed = self._remove_correlated_features(corr)
+            try:
+                stayed = self._remove_correlated_features(corr)
+            except Exception as e:
+                print("can't correlate this")
+                print("this is the exception")
+                print(e)
             self.columns_stay = [col for col in stayed if col in df.columns]
             self.numerical_cols = [col for col in self.numerical_cols if col in self.columns_stay]
             self.categorical_cols = [col for col in self.categorical_cols if col in self.columns_stay]
             self.fit_first = False
         cols = [col for col in self.columns_stay if col in X.columns]
+        print("CorrelationTransformer transform end")
         if len(cols) == 0:
             print("can't remove features, only few remained")
             return X
@@ -685,6 +719,7 @@ class LabelEncoderTransformer(CustomTransformer):
         cols = [col for col in self.categorical_cols if col in X.columns]
         self.labels = {col: {"labeler": LabelEncoder().fit(X[col].astype("str")),
                              "uniques": X[col].astype("str").unique()} for col in cols}
+        print("LabelEncoderTransformer fit end")
         return self
 
     def _labeler(self, col):
@@ -709,6 +744,7 @@ class LabelEncoderTransformer(CustomTransformer):
             X = pd.DataFrame(X, columns=self._columns, copy=True)
         cols = [col for col in self.categorical_cols if col in X.columns]
         X.loc[:, cols] = X[cols].apply(lambda col: self._labeler(col), axis=0)
+        print("LabelEncoderTransformer transform end")
         return X
 
 
@@ -744,6 +780,7 @@ class DummiesTransformer(CustomTransformer):
         except Exception as e:
             print(e)
         self.cols_name_after = df.columns
+        print("DummiesTransformer fit end")
         return self
 
     def transform(self, X, y=None, **kwargs):
@@ -756,14 +793,19 @@ class DummiesTransformer(CustomTransformer):
         """
         cols = [col for col in self.categorical_cols if col in X.columns]
         df = X.copy(True)
-        df = pd.concat([df.drop(cols, axis=1),
-                        pd.get_dummies(data=df[cols], columns=cols, drop_first=True)], axis=1)
-        cols_out = [col for col in df.columns if col in self.cols_name_after]
-        cols_complete = [col for col in self.cols_name_after if col not in df.columns]
-        df = df[cols_out]
-        for col in cols_complete:
-            df[col] = 0
-        if self.final_cols is None:
-            self.final_cols = cols_out + cols_complete
+        if len(cols) > 0:
+            df = pd.concat([df.drop(cols, axis=1),
+                            pd.get_dummies(data=df[cols], columns=cols, drop_first=True)], axis=1)
+            cols_out = [col for col in df.columns if col in self.cols_name_after]
+            cols_complete = [col for col in self.cols_name_after if col not in df.columns]
+            df = df[cols_out]
+            for col in cols_complete:
+                df[col] = 0
+            if self.final_cols is None:
+                self.final_cols = cols_out + cols_complete
+            print("DummiesTransformer transform end")
+            return df[self.final_cols]
+        else:
+            print("DummiesTransformer transform end")
+            return df
 
-        return df[self.final_cols]
