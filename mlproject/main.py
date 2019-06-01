@@ -1,5 +1,5 @@
 import mlproject.datasets.datasets.xgboost_data as xgboostdata
-from mlproject.dev_tools import get_cols, best_t_f1
+from mlproject.dev_tools import get_cols, measures
 from mlproject.pre_processing.pipelines import MLPipeline
 from mlproject.pre_processing.transformers import *
 import pandas as pd
@@ -14,7 +14,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.neural_network import MLPClassifier
 from xgboost import XGBClassifier
 from sklearn.model_selection import GridSearchCV
-from sklearn.metrics import precision_recall_curve
+from sklearn.metrics import precision_recall_curve, roc_curve, auc
 import multiprocessing as mp
 
 
@@ -69,6 +69,11 @@ def run():
     clfs = [LogisticRegression(),
             MLPClassifier(activation="relu", hidden_layer_sizes=(100, 100), solver="sgd"),
             XGBClassifier(n_jobs=mp.cpu_count() - 2, objective="reg:logistic", scoring='roc_auc', bootstrap=True)]
+    path = os.getcwd() + "/results/"
+    X_train.to_csv(path + "x_train.csv", index=False)
+    X_test.to_csv(path + "x_test.csv", index=False)
+    y_train.to_csv(path + "y_train.csv", index=False)
+    y_test.to_csv(path + "y_test.csv", index=False)
 
     for i, clf in enumerate(clfs):
 
@@ -76,11 +81,11 @@ def run():
         print("doing model {}".format(i))
         # Create the grid search hyperparameters
         params = {
-            0:{
-                'C': [1 ** -i for i in range(-3, 4)]},
-            1: {'alpha': [1 ** -i for i in range(-3, 4)],
+            0: {
+                'C': [10 ** -i for i in range(-3, 4)]},
+            1: {'alpha': [10 ** -i for i in range(-3, 4)],
                 'batch_size': [32, 64],
-                'learning_rate_init': [1 ** -i for i in range(-3, 4)]},
+                'learning_rate_init': [10 ** -i for i in range(-3, 4)]},
             2: {'n_estimators': [800, 900, 1000],
                 'colsample_bytree': [i / 10.0 for i in range(6, 9)],
                 'max_depth': range(3, 6),
@@ -88,14 +93,11 @@ def run():
                 'min_samples_leaf': [i / 10.0 for i in range(2, 5)],
                 'gamma': [0, 1, 5]}
         }
-
-        path = os.getcwd() + "/results/"
-        X_train.to_csv(path + "x_train.csv", index=False)
-        X_test.to_csv(path + "x_test.csv", index=False)
-        y_train.to_csv(path + "y_train.csv", index=False)
-        y_test.to_csv(path + "y_test.csv", index=False)
-        grid = GridSearchCV(estimator=clf, param_grid=params[i], cv=3, refit=True,
-                            n_jobs=mp.cpu_count() - 2, scoring="f1")
+        if i == 1:
+            grid = GridSearchCV(estimator=clf, param_grid=params[i], cv=3, refit=True, n_jobs=mp.cpu_count() - 2)
+        else:
+            grid = GridSearchCV(estimator=clf, param_grid=params[i], cv=3, refit=True, n_jobs=mp.cpu_count() - 2,
+                                scoring="f1")
         grid.fit(X_train, y_train)
         train_score = grid.score(X_train, y_train)
         test_score = grid.score(X_test, y_test)
@@ -106,32 +108,79 @@ def run():
         print("the total for model {} in minutes is: {}".format(i, (time.time() - start_time) / 60))
 
 
-def evaluation():
+def plot_roc(model, y_test, y_score):
+
+    plt.figure()
+    lw = 2
+    fpr, tpr, _ = roc_curve(y_test, y_score)
+    roc_auc = auc(fpr, tpr)
+    plt.plot(fpr, tpr, color='darkorange', lw=lw, label='ROC curve (area = %0.2f)' % roc_auc)
+    plt.plot([0, 1], [0, 1], color='navy', lw=lw, linestyle='--')
+    plt.xlim([0.0, 1.0])
+    plt.ylim([0.0, 1.05])
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title('ROC curve {}'.format(model))
+    plt.legend(loc="lower right")
+    plt.show()
+
+
+def plot_hyper_params(grid):
+
+    print(1)
+
+
+def model_evaluation():
 
     path = os.getcwd() + "/results/"
-    x_train = pd.read_csv(path + "x_train.csv")
-    y_train = pd.read_csv(path + "y_train.csv")
     x_test = pd.read_csv(path + "x_test.csv")
     y_test = pd.read_csv(path + "y_test.csv")
     lr = pickle.load(open(path + "grid_0.p", "rb"))
     mlp = pickle.load(open(path + "grid_1.p", "rb"))
     xgboost = pickle.load(open(path + "grid_2.p", "rb"))
     print("lr best hyperparameters: {}".format(lr.best_params_))
-    print("lr best hyperparameters: {}".format(mlp.best_params_))
-    print("lr best hyperparameters: {}".format(xgboost.best_params_))
-
+    print("mlp best hyperparameters: {}".format(mlp.best_params_))
+    print("xgboost best hyperparameters: {}".format(xgboost.best_params_))
     lr_p, lr_r, lr_t = precision_recall_curve(y_test, lr.predict_proba(x_test)[:, 1])
     mlp_p, mlp_r, mlp_t = precision_recall_curve(y_test, mlp.predict_proba(x_test)[:, 1])
     xgboost_p, xgboost_r, xgboost_t = precision_recall_curve(y_test, xgboost.predict_proba(x_test)[:, 1])
-    lr_best_t, lr_f1 = best_t_f1(lr_p, lr_r, lr_t)
-    mlp_best_t, mlp_f1 = best_t_f1(mlp_p, mlp_r, mlp_t)
-    xgboost_best_t, xgboost_f1 = best_t_f1(xgboost_p, xgboost_r, xgboost_t)
+    lr_best_t, lr_f1, lr_precision, lr_recall, lr_accuracy = measures(lr_p, lr_r, lr_t, lr, x_test, y_test)
+    mlp_best_t, mlp_f1, mlp_precision, mlp_recall, mlp_accuracy = measures(mlp_p, mlp_r, mlp_t, mlp, x_test, y_test)
+    xgboost_best_t, xgboost_f1, xgboost_precision, xgboost_recall, xgboost_accuracy = measures(xgboost_p, xgboost_r, xgboost_t, xgboost, x_test, y_test)
     print("lr")
-    print(lr_best_t, lr_f1)
+    print("best t: {}".format(lr_best_t))
+    print("f1: {}".format(lr_f1))
+    print("accuracy: {}".format(lr_precision))
+    print("precision: {}".format(lr_precision))
+    print("recall: {}".format(lr_recall))
     print("mlp")
-    print(mlp_best_t, mlp_f1)
+    print("best t: {}".format(mlp_best_t))
+    print("f1: {}".format(mlp_f1))
+    print("accuracy: {}".format(mlp_precision))
+    print("precision: {}".format(mlp_precision))
+    print("recall: {}".format(mlp_recall))
     print("xgboost")
-    print(xgboost_best_t, xgboost_f1)
+    print("best t: {}".format(xgboost_best_t))
+    print("f1: {}".format(xgboost_f1))
+    print("accuracy: {}".format(xgboost_precision))
+    print("precision: {}".format(xgboost_precision))
+    print("recall: {}".format(xgboost_recall))
+    plot_roc("logistic regression", y_test, lr.predict_proba(x_test)[:, 1])
+    plot_roc("Multilayer perceptron", y_test, mlp.predict_proba(x_test)[:, 1])
+    plot_roc("xgboost", y_test, xgboost.predict_proba(x_test)[:, 1])
+
+
+def evaluation():
+
+    path = os.getcwd() + "/results/"
+    X_train = pd.read_csv(path + "x_train.csv")
+    lr = pickle.load(open(path + "grid_0.p", "rb")).best_estimator_
+    df = pd.DataFrame([X_train.columns, lr.coef_[0], abs(lr.coef_[0])]).T
+    df.columns = ["feature", "coefficient", "coefficient_abs"]
+    df = df.sort_values("coefficient_abs",ascending=False)
+    inte = lr.intercept_[0]
+    df.append(pd.DataFrame([{"feature": "intercept", "coefficient": inte, "coefficient_abs": abs(inte)}]),
+              sort=False).to_csv(path + "coeff.csv", index=False)
 
 
 def analysis():
@@ -170,6 +219,7 @@ if __name__ == "__main__":
 
     os.chdir(os.path.dirname(os.path.realpath(__file__)))
     start_time = time.time()
-    run()
+    # run()
+    # model_evaluation()
     evaluation()
     print("the total time in minutes is: {}".format((time.time() - start_time) / 60))
