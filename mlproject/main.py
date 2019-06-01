@@ -55,23 +55,6 @@ def run():
                                           threshold=0.9)
     dummies = DummiesTransformer(cat_cols)
 
-    clf1 = LogisticRegression()
-    clf2 = MLPClassifier(activation="relu", hidden_layer_sizes=(100, 100), solver="sgd")
-    meta_cls = XGBClassifier(n_jobs=mp.cpu_count() - 2, objective="reg:logistic", scoring='roc_auc', bootstrap=True)
-    meta = StackingClassifier(classifiers=[clf1, clf2], meta_classifier=meta_cls)
-    # Create the grid search hyperparameters
-    params = {
-        'logisticregression__C': [1 ** -i for i in range(-3, 4)],
-        'mlpclassifier__alpha': [1 ** -i for i in range(-3, 4)],
-        'mlpclassifier__batch_size': [32, 64],
-        'mlpclassifier__learning_rate_init': [1 ** -i for i in range(-3, 4)],
-        'meta-xgbclassifier__n_estimators': [800, 900, 1000],
-        'meta-xgbclassifier__colsample_bytree': [i / 10.0 for i in range(6, 9)],
-        'meta-xgbclassifier__max_depth': range(3, 6),
-        'meta-xgbclassifier__min_samples_split': [i / 10.0 for i in range(2, 6)],
-        'meta-xgbclassifier__min_samples_leaf': [i / 10.0 for i in range(2, 5)],
-        'meta-xgbclassifier__gamma': [0, 1, 5]}
-    # the pre process pipeline steps
     steps_feat = [("clear_non_variance", clear_stage),
                   ("imputer", imputer),
                   ("outliers", outliers),
@@ -79,22 +62,47 @@ def run():
                   ("categorize", categorize),
                   ("correlations", correlations),
                   ("dummies", dummies)]
+    # the pre process pipeline steps
     pipeline_feat = MLPipeline(steps=steps_feat)
     X_train = pipeline_feat.fit_transform(X_train, y_train).reset_index(drop=True)
     X_test = pipeline_feat.transform(X_test).reset_index(drop=True)
-    path = os.getcwd() + "/results/"
-    X_train.to_csv(path + "x_train.csv", index=False)
-    X_test.to_csv(path + "x_test.csv", index=False)
-    y_train.to_csv(path + "y_train.csv", index=False)
-    y_test.to_csv(path + "y_test.csv", index=False)
-    grid = GridSearchCV(estimator=meta, param_grid=params, cv=3, refit=True, n_jobs=mp.cpu_count() - 2)
-    grid.fit(X_train, y_train)
-    train_score = grid.score(X_train, y_train)
-    test_score = grid.score(X_test, y_test)
-    pickle.dump(grid, open(path + "grid.p", "wb"))
-    print("problem {} results".format(problem))
-    print("train_score: {}".format(train_score))
-    print("test_score: {}".format(test_score))
+    clfs = [LogisticRegression(),
+            MLPClassifier(activation="relu", hidden_layer_sizes=(100, 100), solver="sgd"),
+            XGBClassifier(n_jobs=mp.cpu_count() - 2, objective="reg:logistic", scoring='roc_auc', bootstrap=True)]
+
+    for i, clf in enumerate(clfs):
+
+        start_time = time.time()
+        print("doing model {}".format(i))
+        # Create the grid search hyperparameters
+        params = {
+            0:{
+                'C': [1 ** -i for i in range(-3, 4)]},
+            1: {'alpha': [1 ** -i for i in range(-3, 4)],
+                'batch_size': [32, 64],
+                'learning_rate_init': [1 ** -i for i in range(-3, 4)]},
+            2: {'n_estimators': [800, 900, 1000],
+                'colsample_bytree': [i / 10.0 for i in range(6, 9)],
+                'max_depth': range(3, 6),
+                'min_samples_split': [i / 10.0 for i in range(2, 6)],
+                'min_samples_leaf': [i / 10.0 for i in range(2, 5)],
+                'gamma': [0, 1, 5]}
+        }
+
+        path = os.getcwd() + "/results/"
+        X_train.to_csv(path + "x_train.csv", index=False)
+        X_test.to_csv(path + "x_test.csv", index=False)
+        y_train.to_csv(path + "y_train.csv", index=False)
+        y_test.to_csv(path + "y_test.csv", index=False)
+        grid = GridSearchCV(estimator=clf, param_grid=params[i], cv=3, refit=True, n_jobs=mp.cpu_count() - 2)
+        grid.fit(X_train, y_train)
+        train_score = grid.score(X_train, y_train)
+        test_score = grid.score(X_test, y_test)
+        pickle.dump(grid, open(path + "grid_{}.p".format(i), "wb"))
+        print("problem {} results model {}".format(problem, i))
+        print("train_score: {}".format(train_score))
+        print("test_score: {}".format(test_score))
+        print("the total for model {} in minutes is: {}".format(i, (time.time() - start_time) / 60))
 
 
 def analysis():
