@@ -1,5 +1,5 @@
 import mlproject.datasets.datasets.xgboost_data as xgboostdata
-from mlproject.dev_tools import get_cols
+from mlproject.dev_tools import get_cols, best_t_f1
 from mlproject.pre_processing.pipelines import MLPipeline
 from mlproject.pre_processing.transformers import *
 import pandas as pd
@@ -14,7 +14,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.neural_network import MLPClassifier
 from xgboost import XGBClassifier
 from sklearn.model_selection import GridSearchCV
-from mlxtend.classifier import StackingClassifier
+from sklearn.metrics import precision_recall_curve
 import multiprocessing as mp
 
 
@@ -94,7 +94,8 @@ def run():
         X_test.to_csv(path + "x_test.csv", index=False)
         y_train.to_csv(path + "y_train.csv", index=False)
         y_test.to_csv(path + "y_test.csv", index=False)
-        grid = GridSearchCV(estimator=clf, param_grid=params[i], cv=3, refit=True, n_jobs=mp.cpu_count() - 2)
+        grid = GridSearchCV(estimator=clf, param_grid=params[i], cv=3, refit=True,
+                            n_jobs=mp.cpu_count() - 2, scoring="f1")
         grid.fit(X_train, y_train)
         train_score = grid.score(X_train, y_train)
         test_score = grid.score(X_test, y_test)
@@ -103,6 +104,34 @@ def run():
         print("train_score: {}".format(train_score))
         print("test_score: {}".format(test_score))
         print("the total for model {} in minutes is: {}".format(i, (time.time() - start_time) / 60))
+
+
+def evaluation():
+
+    path = os.getcwd() + "/results/"
+    x_train = pd.read_csv(path + "x_train.csv")
+    y_train = pd.read_csv(path + "y_train.csv")
+    x_test = pd.read_csv(path + "x_test.csv")
+    y_test = pd.read_csv(path + "y_test.csv")
+    lr = pickle.load(open(path + "grid_0.p", "rb"))
+    mlp = pickle.load(open(path + "grid_1.p", "rb"))
+    xgboost = pickle.load(open(path + "grid_2.p", "rb"))
+    print("lr best hyperparameters: {}".format(lr.best_params_))
+    print("lr best hyperparameters: {}".format(mlp.best_params_))
+    print("lr best hyperparameters: {}".format(xgboost.best_params_))
+
+    lr_p, lr_r, lr_t = precision_recall_curve(y_test, lr.predict_proba(x_test)[:, 1])
+    mlp_p, mlp_r, mlp_t = precision_recall_curve(y_test, mlp.predict_proba(x_test)[:, 1])
+    xgboost_p, xgboost_r, xgboost_t = precision_recall_curve(y_test, xgboost.predict_proba(x_test)[:, 1])
+    lr_best_t, lr_f1 = best_t_f1(lr_p, lr_r, lr_t)
+    mlp_best_t, mlp_f1 = best_t_f1(mlp_p, mlp_r, mlp_t)
+    xgboost_best_t, xgboost_f1 = best_t_f1(xgboost_p, xgboost_r, xgboost_t)
+    print("lr")
+    print(lr_best_t, lr_f1)
+    print("mlp")
+    print(mlp_best_t, mlp_f1)
+    print("xgboost")
+    print(xgboost_best_t, xgboost_f1)
 
 
 def analysis():
@@ -142,4 +171,5 @@ if __name__ == "__main__":
     os.chdir(os.path.dirname(os.path.realpath(__file__)))
     start_time = time.time()
     run()
+    evaluation()
     print("the total time in minutes is: {}".format((time.time() - start_time) / 60))

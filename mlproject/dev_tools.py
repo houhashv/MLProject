@@ -2,6 +2,20 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import random
 import os
+import numpy as np
+
+
+def best_t_f1(precisions, recalls, thresholds):
+    """
+    calculate the best threshold by F1 measure
+    :param precisions: precisions from the precision-recall curve - list of float
+    :param recalls: recalls from the precision - recall curve - list of float
+    :param thresholds: thresholds from the precision-recall curve - list of float
+    :return: the best threshold - float
+    """
+    f1 = [2 * (precisions[i] * recalls[i]) / (precisions[i] + recalls[i]) for i in range(0, len(thresholds))]
+    t = thresholds[np.argmax(f1)]
+    return t, max(f1)
 
 
 def is_date(df, col, string_ratio=0.02):
