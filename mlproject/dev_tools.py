@@ -4,6 +4,9 @@ import random
 import os
 import numpy as np
 from sklearn.metrics import accuracy_score, recall_score, precision_score
+from sklearn.cluster import KMeans
+from sklearn.decomposition import PCA
+from mpl_toolkits.mplot3d import Axes3D
 
 
 def measures(precisions, recalls, thresholds, grid, x_test, y_test):
@@ -22,6 +25,28 @@ def measures(precisions, recalls, thresholds, grid, x_test, y_test):
     recall = recalls[np.argmax(f1)]
     accuracy = accuracy_score(y_test, (grid.best_estimator_.predict_proba(x_test)[:, 1] >= t).astype(bool))
     return t, best_f1, precision, recall, accuracy
+
+
+def measures_kmeans(y_test):
+
+    path = os.getcwd() + "/results/"
+    x_train = pd.read_csv(path + "x_train.csv")
+    x_test = pd.read_csv(path + "x_test.csv")
+    kmeans = KMeans(n_clusters=2)
+    x_test_pca = PCA(n_components=3).fit_transform(x_test)
+    kmeans_pred = kmeans.fit(x_train).predict(x_test)
+    fig = plt.figure()
+    ax = Axes3D(fig)
+    ax.scatter(x_test_pca[:, 0], x_test_pca[:, 1], x_test_pca[:, 2], c=kmeans_pred, edgecolor='none', alpha=0.5)
+    ax.set_xlabel('X Label')
+    ax.set_ylabel('Y Label')
+    ax.set_zlabel('Z Label')
+    plt.show()
+    precision = precision_score(y_test, kmeans_pred)
+    recall = recall_score(y_test, kmeans_pred)
+    accuracy = accuracy_score(y_test, kmeans_pred)
+    f1 = 2 * (precision * recall) / (precision + recall)
+    return f1, precision, recall, accuracy
 
 
 def is_date(df, col, string_ratio=0.02):

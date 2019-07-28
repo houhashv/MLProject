@@ -4,6 +4,8 @@ import pandas as pd
 import hdbscan
 import numpy as np
 import networkx
+
+# for stop seeing unnecessary messages
 pd.options.mode.chained_assignment = None
 
 

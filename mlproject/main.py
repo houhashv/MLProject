@@ -1,13 +1,7 @@
 import mlproject.datasets.datasets.xgboost_data as xgboostdata
-from mlproject.dev_tools import get_cols, measures
+from mlproject.dev_tools import get_cols, measures, measures_kmeans
 from mlproject.pre_processing.pipelines import MLPipeline
 from mlproject.pre_processing.transformers import *
-import pandas as pd
-import copy
-import shap
-import pickle
-import os
-import time
 from sklearn.model_selection import train_test_split
 from matplotlib import pyplot as plt
 from sklearn.linear_model import LogisticRegression
@@ -16,6 +10,12 @@ from xgboost import XGBClassifier
 from sklearn.model_selection import GridSearchCV
 from sklearn.metrics import precision_recall_curve, roc_curve, auc
 import multiprocessing as mp
+import pandas as pd
+import copy
+import shap
+import pickle
+import os
+import time
 
 
 def run():
@@ -45,7 +45,6 @@ def run():
     dflearning = dflearning[cat_cols + numeric_cols + target]
     X_train, X_test, y_train, y_test = train_test_split(dflearning.drop(target, axis=1), dflearning[target],
                                                         test_size=0.25, random_state=42)
-
     clear_stage = ClearNoCategoriesTransformer(categorical_cols=cat_cols)
     imputer = ImputeTransformer(numerical_cols=numeric_cols, categorical_cols=cat_cols)
     outliers = OutliersTransformer(numerical_cols=numeric_cols, categorical_cols=cat_cols)
@@ -54,7 +53,6 @@ def run():
     correlations = CorrelationTransformer(numerical_cols=numeric_cols, categorical_cols=cat_cols, target=target,
                                           threshold=0.9)
     dummies = DummiesTransformer(cat_cols)
-
     steps_feat = [("clear_non_variance", clear_stage),
                   ("imputer", imputer),
                   ("outliers", outliers),
@@ -125,11 +123,6 @@ def plot_roc(model, y_test, y_score):
     plt.show()
 
 
-def plot_hyper_params(grid):
-
-    print(1)
-
-
 def model_evaluation():
 
     path = os.getcwd() + "/results/"
@@ -144,27 +137,33 @@ def model_evaluation():
     lr_p, lr_r, lr_t = precision_recall_curve(y_test, lr.predict_proba(x_test)[:, 1])
     mlp_p, mlp_r, mlp_t = precision_recall_curve(y_test, mlp.predict_proba(x_test)[:, 1])
     xgboost_p, xgboost_r, xgboost_t = precision_recall_curve(y_test, xgboost.predict_proba(x_test)[:, 1])
+    kmeans_f1, kmeans_precision, kmeans_recall, kmeans_accuracy = measures_kmeans(y_test)
     lr_best_t, lr_f1, lr_precision, lr_recall, lr_accuracy = measures(lr_p, lr_r, lr_t, lr, x_test, y_test)
     mlp_best_t, mlp_f1, mlp_precision, mlp_recall, mlp_accuracy = measures(mlp_p, mlp_r, mlp_t, mlp, x_test, y_test)
     xgboost_best_t, xgboost_f1, xgboost_precision, xgboost_recall, xgboost_accuracy = measures(xgboost_p, xgboost_r, xgboost_t, xgboost, x_test, y_test)
     print("lr")
     print("best t: {}".format(lr_best_t))
     print("f1: {}".format(lr_f1))
-    print("accuracy: {}".format(lr_precision))
+    print("accuracy: {}".format(lr_accuracy))
     print("precision: {}".format(lr_precision))
     print("recall: {}".format(lr_recall))
     print("mlp")
     print("best t: {}".format(mlp_best_t))
     print("f1: {}".format(mlp_f1))
-    print("accuracy: {}".format(mlp_precision))
+    print("accuracy: {}".format(mlp_accuracy))
     print("precision: {}".format(mlp_precision))
     print("recall: {}".format(mlp_recall))
     print("xgboost")
     print("best t: {}".format(xgboost_best_t))
     print("f1: {}".format(xgboost_f1))
-    print("accuracy: {}".format(xgboost_precision))
+    print("accuracy: {}".format(xgboost_accuracy))
     print("precision: {}".format(xgboost_precision))
     print("recall: {}".format(xgboost_recall))
+    print("kmeans")
+    print("f1: {}".format(kmeans_f1))
+    print("accuracy: {}".format(kmeans_accuracy))
+    print("precision: {}".format(kmeans_precision))
+    print("recall: {}".format(kmeans_recall))
     plot_roc("logistic regression", y_test, lr.predict_proba(x_test)[:, 1])
     plot_roc("Multilayer perceptron", y_test, mlp.predict_proba(x_test)[:, 1])
     plot_roc("xgboost", y_test, xgboost.predict_proba(x_test)[:, 1])
@@ -181,6 +180,11 @@ def evaluation():
     inte = lr.intercept_[0]
     df.append(pd.DataFrame([{"feature": "intercept", "coefficient": inte, "coefficient_abs": abs(inte)}]),
               sort=False).to_csv(path + "coeff.csv", index=False)
+    try:
+        corr = X_train.corr("spearman").loc[df["feature"].values]
+        print(corr)
+    except Exception as e:
+        print(e)
 
 
 def analysis():
@@ -219,7 +223,9 @@ if __name__ == "__main__":
 
     os.chdir(os.path.dirname(os.path.realpath(__file__)))
     start_time = time.time()
-    # run()
-    # model_evaluation()
+    to_train = False
+    if to_train:
+        run()
+    model_evaluation()
     evaluation()
     print("the total time in minutes is: {}".format((time.time() - start_time) / 60))
